@@ -3,9 +3,9 @@ import ale_py
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 from torch.distributions import Categorical
 from torchvision import transforms
-import numpy as np
 
 gym.register_envs(ale_py)
 
@@ -136,7 +136,7 @@ def train():
         rewards, log_probs, values, actions, dones = [], [], [], [], []
 
         for step in range(2048):
-            obs_tensor = torch.tensor([obs_stack], dtype=torch.float32)
+            obs_tensor = torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float()
 
             action, log_prob, entropy, value = actor_critic.act(obs_tensor)
             next_obs, reward, done, _, _ = env.step(action.item())
@@ -161,8 +161,8 @@ def train():
             torch.tensor([obs_stack], dtype=torch.float32),
             torch.tensor(actions, dtype=torch.int64),
             torch.tensor(log_probs, dtype=torch.float32),
-            torch.tensor(returns, dtype=torch.float32),
-            torch.tensor(advantages, dtype=torch.float32),
+            returns.clone().detach(),
+            advantages.clone().detach(),
         )
 
         print(f"Episode {episode + 1} completed")
