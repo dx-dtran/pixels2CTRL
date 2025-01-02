@@ -158,7 +158,7 @@ def train():
 
         advantages, returns = ppo.compute_advantages(rewards, values, dones)
         ppo.update(
-            torch.tensor([obs_stack], dtype=torch.float32),
+            torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float(),
             torch.tensor(actions, dtype=torch.int64),
             torch.tensor(log_probs, dtype=torch.float32),
             returns.clone().detach(),
