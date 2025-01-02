@@ -6,8 +6,8 @@ import torch.optim as optim
 import numpy as np
 from torch.distributions import Categorical
 from torchvision import transforms
+import multiprocessing as mp
 
-# Register Atari Environment
 gym.register_envs(ale_py)
 
 
@@ -124,7 +124,8 @@ class PPO:
             )
 
 
-def render_game(env, actor_critic, stacked_frames, is_new_episode):
+def render_game(actor_critic, stacked_frames, is_new_episode):
+    env = gym.make("ALE/Tennis-v5", render_mode="human", obs_type="rgb")
     obs = preprocess_frame(env.reset()[0])
     obs_stack, stacked_frames = stack_frames(stacked_frames, obs, is_new_episode)
     done = False
@@ -137,10 +138,11 @@ def render_game(env, actor_critic, stacked_frames, is_new_episode):
         obs_stack, stacked_frames = stack_frames(
             stacked_frames, next_obs_processed, False
         )
+    env.close()
 
 
 def train():
-    env = gym.make("ALE/Tennis-v5", render_mode="human")
+    env = gym.make("ALE/Tennis-v5")
     n_actions = env.action_space.n
     input_shape = (4, 84, 84)
 
@@ -153,13 +155,12 @@ def train():
 
     for episode in range(1000):
         if episode == 0 or (episode + 1) % 25 == 0:
-            print(f"Rendering game at episode {episode + 1}")
-            render_game(
-                gym.make("ALE/Tennis-v5", render_mode="human"),
-                actor_critic,
-                stacked_frames,
-                True,
+            render_process = mp.Process(
+                target=render_game,
+                args=(actor_critic, stacked_frames, True),
+                daemon=True,
             )
+            render_process.start()
 
         rewards, log_probs, values, actions, dones = [], [], [], [], []
 
@@ -197,4 +198,5 @@ def train():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn")
     train()
