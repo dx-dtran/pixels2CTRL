@@ -7,6 +7,7 @@ import numpy as np
 from torch.distributions import Categorical
 from torchvision import transforms
 
+# Register Atari Environment
 gym.register_envs(ale_py)
 
 
@@ -123,8 +124,23 @@ class PPO:
             )
 
 
+def render_game(env, actor_critic, stacked_frames, is_new_episode):
+    obs = preprocess_frame(env.reset()[0])
+    obs_stack, stacked_frames = stack_frames(stacked_frames, obs, is_new_episode)
+    done = False
+    while not done:
+        env.render()
+        obs_tensor = torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float()
+        action, _, _, _ = actor_critic.act(obs_tensor)
+        next_obs, _, done, _, _ = env.step(action.item())
+        next_obs_processed = preprocess_frame(next_obs)
+        obs_stack, stacked_frames = stack_frames(
+            stacked_frames, next_obs_processed, False
+        )
+
+
 def train():
-    env = gym.make("ALE/Tennis-v5", render_mode=None)
+    env = gym.make("ALE/Tennis-v5", render_mode="human")
     n_actions = env.action_space.n
     input_shape = (4, 84, 84)
 
@@ -136,6 +152,15 @@ def train():
     obs_stack = np.stack(stacked_frames, axis=0)
 
     for episode in range(1000):
+        if episode == 0 or (episode + 1) % 25 == 0:
+            print(f"Rendering game at episode {episode + 1}")
+            render_game(
+                gym.make("ALE/Tennis-v5", render_mode="human"),
+                actor_critic,
+                stacked_frames,
+                True,
+            )
+
         rewards, log_probs, values, actions, dones = [], [], [], [], []
 
         for step in range(2048):
