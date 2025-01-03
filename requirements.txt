@@ -1,0 +1,6 @@
+torch
+torchvision
+ale-py
+gymnasium
+numpy
+opencv-python
