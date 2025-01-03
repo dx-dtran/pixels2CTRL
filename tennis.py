@@ -172,6 +172,7 @@ def train():
     obs_stack = np.stack(stacked_frames, axis=0)
 
     for episode in range(1000):
+        total_episode_reward = 0
         if episode == 0 or (episode + 1) % 25 == 0:
             render_process = mp.Process(
                 target=render_game,
@@ -200,6 +201,7 @@ def train():
             )
 
             rewards.append(reward)
+            total_episode_reward += reward
             log_probs.append(log_prob)
             values.append(value)
             actions.append(action)
@@ -218,7 +220,9 @@ def train():
             advantages.clone().detach(),
         )
 
-        print(f"Episode {episode + 1} completed")
+        print(
+            f"Episode {episode + 1} completed - Total Reward: {total_episode_reward:.2f}"
+        )
 
 
 if __name__ == "__main__":
