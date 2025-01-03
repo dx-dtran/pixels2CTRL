@@ -127,7 +127,7 @@ class PPO:
 
 
 def render_game(
-    actor_critic, stacked_frames, is_new_episode, output_dir="rendered_games"
+    actor_critic, stacked_frames, is_new_episode, episode, output_dir="rendered_games"
 ):
     os.makedirs(output_dir, exist_ok=True)
     env = gym.make("ALE/Tennis-v5", render_mode="rgb_array")
@@ -136,7 +136,7 @@ def render_game(
     done = False
     frame_count = 0
 
-    video_path = os.path.join(output_dir, "gameplay.mp4")
+    video_path = os.path.join(output_dir, f"episode_{episode}.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     fps = 30
     frame_size = (160, 210)
@@ -179,7 +179,8 @@ def train():
                     actor_critic,
                     stacked_frames,
                     True,
-                    f"rendered_games/episode_{episode+1}",
+                    episode + 1,
+                    "rendered_games",
                 ),
                 daemon=True,
             )
