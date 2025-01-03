@@ -171,16 +171,17 @@ def train():
     stacked_frames = [obs for _ in range(4)]
     obs_stack = np.stack(stacked_frames, axis=0)
 
-    for episode in range(1000):
-        total_episode_reward = 0
-        if episode == 0 or (episode + 1) % 25 == 0:
+    for batch in range(1000):
+        total_rewards = []
+        game_reward = 0
+        if batch == 0 or (batch + 1) % 25 == 0:
             render_process = mp.Process(
                 target=render_game,
                 args=(
                     actor_critic,
                     stacked_frames,
                     True,
-                    episode + 1,
+                    batch + 1,
                     "rendered_games",
                 ),
                 daemon=True,
@@ -201,13 +202,15 @@ def train():
             )
 
             rewards.append(reward)
-            total_episode_reward += reward
+            game_reward += reward
             log_probs.append(log_prob)
             values.append(value)
             actions.append(action)
             dones.append(done)
 
             if done:
+                total_rewards.append(game_reward)
+                game_reward = 0
                 obs = preprocess_frame(env.reset()[0])
                 obs_stack, stacked_frames = stack_frames([], obs, is_new_episode=True)
 
@@ -221,7 +224,7 @@ def train():
         )
 
         print(
-            f"Episode {episode + 1} completed - Total Reward: {total_episode_reward:.2f}"
+            f"Batch {batch + 1} completed - Average Reward per Game: {np.mean(total_rewards):.2f}"
         )
 
 
