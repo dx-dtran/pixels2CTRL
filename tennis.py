@@ -52,7 +52,7 @@ class PPOActorCritic(nn.Module):
         self.value = nn.Linear(512, 1)
 
     def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, *shape))
+        o = self.conv(torch.zeros(1, *shape).to(next(self.parameters()).device))
         return int(np.prod(o.size()))
 
     def forward(self, x):
@@ -146,7 +146,11 @@ def render_game(
         frame = env.render()
         video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
-        obs_tensor = torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float()
+        obs_tensor = (
+            torch.from_numpy(np.expand_dims(obs_stack, axis=0))
+            .float()
+            .to(next(actor_critic.parameters()).device)
+        )
         action, _, _, _ = actor_critic.act(obs_tensor)
         next_obs, _, done, _, _ = env.step(action.item())
         next_obs_processed = preprocess_frame(next_obs)
@@ -160,11 +164,13 @@ def render_game(
 
 
 def train():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
     env = gym.make("ALE/Tennis-v5")
     n_actions = env.action_space.n
     input_shape = (4, 84, 84)
 
-    actor_critic = PPOActorCritic(input_shape, n_actions)
+    actor_critic = PPOActorCritic(input_shape, n_actions).to(device)
     ppo = PPO(actor_critic)
 
     obs = preprocess_frame(env.reset()[0])
@@ -191,7 +197,9 @@ def train():
         rewards, log_probs, values, actions, dones = [], [], [], [], []
 
         for step in range(2048):
-            obs_tensor = torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float()
+            obs_tensor = (
+                torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float().to(device)
+            )
 
             action, log_prob, entropy, value = actor_critic.act(obs_tensor)
             next_obs, reward, done, _, _ = env.step(action.item())
@@ -216,11 +224,11 @@ def train():
 
         advantages, returns = ppo.compute_advantages(rewards, values, dones)
         ppo.update(
-            torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float(),
-            torch.tensor(actions, dtype=torch.int64),
-            torch.tensor(log_probs, dtype=torch.float32),
-            returns.clone().detach(),
-            advantages.clone().detach(),
+            torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float().to(device),
+            torch.tensor(actions, dtype=torch.int64).to(device),
+            torch.tensor(log_probs, dtype=torch.float32).to(device),
+            returns.clone().detach().to(device),
+            advantages.clone().detach().to(device),
         )
 
         print(
