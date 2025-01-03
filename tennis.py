@@ -7,6 +7,8 @@ import numpy as np
 from torch.distributions import Categorical
 from torchvision import transforms
 import multiprocessing as mp
+import cv2
+import os
 
 gym.register_envs(ale_py)
 
@@ -124,13 +126,26 @@ class PPO:
             )
 
 
-def render_game(actor_critic, stacked_frames, is_new_episode):
-    env = gym.make("ALE/Tennis-v5", render_mode="human", obs_type="rgb")
+def render_game(
+    actor_critic, stacked_frames, is_new_episode, output_dir="rendered_games"
+):
+    os.makedirs(output_dir, exist_ok=True)
+    env = gym.make("ALE/Tennis-v5", render_mode="rgb_array")
     obs = preprocess_frame(env.reset()[0])
     obs_stack, stacked_frames = stack_frames(stacked_frames, obs, is_new_episode)
     done = False
+    frame_count = 0
+
+    video_path = os.path.join(output_dir, "gameplay.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fps = 30
+    frame_size = (160, 210)
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
+
     while not done:
-        env.render()
+        frame = env.render()
+        video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
         obs_tensor = torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float()
         action, _, _, _ = actor_critic.act(obs_tensor)
         next_obs, _, done, _, _ = env.step(action.item())
@@ -138,6 +153,9 @@ def render_game(actor_critic, stacked_frames, is_new_episode):
         obs_stack, stacked_frames = stack_frames(
             stacked_frames, next_obs_processed, False
         )
+        frame_count += 1
+
+    video_writer.release()
     env.close()
 
 
@@ -157,7 +175,12 @@ def train():
         if episode == 0 or (episode + 1) % 25 == 0:
             render_process = mp.Process(
                 target=render_game,
-                args=(actor_critic, stacked_frames, True),
+                args=(
+                    actor_critic,
+                    stacked_frames,
+                    True,
+                    f"rendered_games/episode_{episode+1}",
+                ),
                 daemon=True,
             )
             render_process.start()
