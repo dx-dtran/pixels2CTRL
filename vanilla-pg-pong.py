@@ -1,5 +1,4 @@
-""" Trains an agent with (stochastic) Policy Gradients on Pong. Uses OpenAI Gym. """
-
+import logging
 import numpy as np
 import pickle
 import gymnasium as gym
@@ -9,6 +8,16 @@ import os
 from datetime import datetime
 
 gym.register_envs(ale_py)
+
+# Set up logging
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_filename = f"training_log_{timestamp}.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler(log_filename, mode="w"), logging.StreamHandler()],
+)
+logger = logging.getLogger()
 
 # hyperparameters
 H = 200  # number of hidden layer neurons
@@ -91,7 +100,6 @@ reward_sum = 0
 episode_number = 0
 start_time = time.time()  # track total duration
 batch_start_time = time.time()  # track batch duration
-timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 folder_name = f"save_{timestamp}"
 os.makedirs(folder_name, exist_ok=True)
 
@@ -127,11 +135,6 @@ while True:
 
     if done:  # an episode finished
         episode_number += 1
-        episode_duration = time.time() - start_time
-        print(
-            f"Episode {episode_number} finished. Duration: {episode_duration:.2f} seconds"
-        )
-        start_time = time.time()  # reset start time for next episode
 
         # stack together all inputs, hidden states, action gradients, and rewards for this episode
         epx = np.vstack(xs)
@@ -154,7 +157,9 @@ while True:
         # perform rmsprop parameter update every batch_size episodes
         if episode_number % batch_size == 0:
             batch_duration = time.time() - batch_start_time
-            print(f"Batch update completed. Duration: {batch_duration:.2f} seconds")
+            logger.info(
+                f"Batch update completed. Duration: {batch_duration:.2f} seconds"
+            )
             batch_start_time = time.time()  # reset batch start time
             for k, v in model.items():
                 g = grad_buffer[k]  # gradient
@@ -170,9 +175,13 @@ while True:
             if running_reward is None
             else running_reward * 0.99 + reward_sum * 0.01
         )
-        print(
-            f"resetting env. episode reward total was {reward_sum}. running mean: {running_reward}"
+
+        episode_duration = time.time() - start_time
+        logger.info(
+            f"Resetting env. Episode {episode_number} game finished. Reward total {reward_sum}. Running mean: {running_reward:.2f}. Duration: {episode_duration:.2f} seconds"
         )
+        start_time = time.time()
+
         if episode_number % 100 == 0:
             pickle.dump(
                 model, open(os.path.join(folder_name, f"save_{episode_number}.p"), "wb")
@@ -180,10 +189,3 @@ while True:
         reward_sum = 0
         observation, _ = env.reset()  # reset env
         prev_x = None
-
-    if done:  # Pong has either +1 or -1 reward exactly when game ends.
-        print(
-            f"ep {episode_number}: game finished, reward: {reward}" + ""
-            if reward == -1
-            else " !!!!!!!!"
-        )
