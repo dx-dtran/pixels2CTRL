@@ -3,8 +3,8 @@ import pickle
 import gymnasium as gym
 import ale_py
 import os
-
-gym.register_envs(ale_py)
+import time
+import cv2
 
 
 def sigmoid(x):
@@ -37,25 +37,44 @@ if not os.path.exists(model_path):
 with open(model_path, "rb") as f:
     model = pickle.load(f)
 
+# Create folder to save video
+video_folder = f"pong_inference_video_{int(time.time())}"
+os.makedirs(video_folder, exist_ok=True)
+
 # Initialize the environment
-env = gym.make("ALE/Pong-v5", render_mode="human")
+env = gym.make("ALE/Pong-v5", render_mode="rgb_array")
+
+# Create video writer
+video_path = os.path.join(video_folder, "pong_episode.mp4")
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+fps = 30
+frame_size = (160, 210)  # Dynamically get frame size
+observation, _ = env.reset()
+video_writer = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
+
 observation, _ = env.reset()
 prev_x = None
+reward_sum = 0
 
-while True:
-    # Preprocess the observation and compute the difference frame
+while True:  # Run until the episode finishes
     cur_x = prepro(observation)
     x = cur_x - prev_x if prev_x is not None else np.zeros(80 * 80)
     prev_x = cur_x
 
-    # Forward the policy network to get action probability
     aprob = policy_forward(x, model)
-    action = 2 if np.random.uniform() < aprob else 3  # Sample an action
+    action = 2 if np.random.uniform() < aprob else 3
 
-    # Step the environment
     observation, reward, done, _, _ = env.step(action)
+    reward_sum += reward
+
+    # Write the current frame to the video
+    frame = env.render()
+    video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
     if done:
-        print("Game over! Resetting environment.")
-        observation, _ = env.reset()
-        prev_x = None
+        print(f"Episode finished. Total reward: {reward_sum}")
+        break
+
+video_writer.release()
+env.close()
+print(f"Video saved at: {video_path}")
