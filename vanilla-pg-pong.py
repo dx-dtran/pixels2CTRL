@@ -5,6 +5,8 @@ import pickle
 import gymnasium as gym
 import ale_py
 import time
+import os
+from datetime import datetime
 
 gym.register_envs(ale_py)
 
@@ -89,6 +91,9 @@ reward_sum = 0
 episode_number = 0
 start_time = time.time()  # track total duration
 batch_start_time = time.time()  # track batch duration
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+folder_name = f"save_{timestamp}"
+os.makedirs(folder_name, exist_ok=True)
 
 while True:
     if render:
@@ -169,7 +174,9 @@ while True:
             f"resetting env. episode reward total was {reward_sum}. running mean: {running_reward}"
         )
         if episode_number % 100 == 0:
-            pickle.dump(model, open("save.p", "wb"))
+            pickle.dump(
+                model, open(os.path.join(folder_name, f"save_{episode_number}.p"), "wb")
+            )
         reward_sum = 0
         observation, _ = env.reset()  # reset env
         prev_x = None
