@@ -4,13 +4,14 @@ import numpy as np
 import pickle
 import gymnasium as gym
 import ale_py
+import time
 
 gym.register_envs(ale_py)
 
 # hyperparameters
 H = 200  # number of hidden layer neurons
 batch_size = 10  # every how many episodes to do a param update?
-learning_rate = 1e-4
+learning_rate = 1e-3
 gamma = 0.99  # discount factor for reward
 decay_rate = 0.99  # decay factor for RMSProp leaky sum of grad^2
 resume = False  # resume from previous checkpoint?
@@ -86,6 +87,9 @@ xs, hs, dlogps, drs = [], [], [], []
 running_reward = None
 reward_sum = 0
 episode_number = 0
+start_time = time.time()  # track total duration
+batch_start_time = time.time()  # track batch duration
+
 while True:
     if render:
         env.render()
@@ -118,6 +122,11 @@ while True:
 
     if done:  # an episode finished
         episode_number += 1
+        episode_duration = time.time() - start_time
+        print(
+            f"Episode {episode_number} finished. Duration: {episode_duration:.2f} seconds"
+        )
+        start_time = time.time()  # reset start time for next episode
 
         # stack together all inputs, hidden states, action gradients, and rewards for this episode
         epx = np.vstack(xs)
@@ -139,6 +148,9 @@ while True:
 
         # perform rmsprop parameter update every batch_size episodes
         if episode_number % batch_size == 0:
+            batch_duration = time.time() - batch_start_time
+            print(f"Batch update completed. Duration: {batch_duration:.2f} seconds")
+            batch_start_time = time.time()  # reset batch start time
             for k, v in model.items():
                 g = grad_buffer[k]  # gradient
                 rmsprop_cache[k] = (
@@ -154,8 +166,7 @@ while True:
             else running_reward * 0.99 + reward_sum * 0.01
         )
         print(
-            "resetting env. episode reward total was %f. running mean: %f"
-            % (reward_sum, running_reward)
+            f"resetting env. episode reward total was {reward_sum}. running mean: {running_reward}"
         )
         if episode_number % 100 == 0:
             pickle.dump(model, open("save.p", "wb"))
@@ -163,7 +174,7 @@ while True:
         observation, _ = env.reset()  # reset env
         prev_x = None
 
-    if reward != 0:  # Pong has either +1 or -1 reward exactly when game ends.
+    if done:  # Pong has either +1 or -1 reward exactly when game ends.
         print(
             f"ep {episode_number}: game finished, reward: {reward}" + ""
             if reward == -1
