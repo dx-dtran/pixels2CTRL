@@ -10,6 +10,7 @@ import multiprocessing as mp
 import cv2
 import os
 
+
 gym.register_envs(ale_py)
 
 
@@ -118,12 +119,22 @@ class PPO:
 
             loss = policy_loss + value_loss + entropy_loss
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            # Log losses
             print(
                 f"Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Entropy Loss: {entropy_loss.item():.4f}, Total Loss: {loss.item():.4f}"
             )
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor_critic.parameters(), max_norm=0.5)
+            self.optimizer.step()
+
+            # Check for NaN values in gradients and parameters
+            for name, param in self.actor_critic.named_parameters():
+                if torch.isnan(param).any():
+                    print(f"NaN detected in parameter: {name}")
+                if param.grad is not None and torch.isnan(param.grad).any():
+                    print(f"NaN detected in gradient: {name}")
 
 
 def render_game(
@@ -177,10 +188,10 @@ def train():
     stacked_frames = [obs for _ in range(4)]
     obs_stack = np.stack(stacked_frames, axis=0)
 
-    for batch in range(1000):
+    for batch in range(10000):
         total_rewards = []
         game_reward = 0
-        if batch == 0 or (batch + 1) % 25 == 0:
+        if batch == 0 or (batch + 1) % 100 == 0:
             render_process = mp.Process(
                 target=render_game,
                 args=(
@@ -204,6 +215,10 @@ def train():
             action, log_prob, entropy, value = actor_critic.act(obs_tensor)
             next_obs, reward, done, _, _ = env.step(action.item())
 
+            if np.isnan(reward) or np.isinf(reward):
+                print("Invalid reward detected! Setting reward to 0.")
+                reward = 0
+
             next_obs_processed = preprocess_frame(next_obs)
             obs_stack, stacked_frames = stack_frames(
                 stacked_frames, next_obs_processed, done
@@ -223,6 +238,13 @@ def train():
                 obs_stack, stacked_frames = stack_frames([], obs, is_new_episode=True)
 
         advantages, returns = ppo.compute_advantages(rewards, values, dones)
+
+        # Log rewards and advantages for debugging
+        print(f"Rewards: {rewards}")
+        print(f"Rewards Len: {len(rewards)}")
+        print(f"Advantages: {advantages.tolist()}")
+        print(f"Returns: {returns.tolist()}")
+
         ppo.update(
             torch.from_numpy(np.expand_dims(obs_stack, axis=0)).float().to(device),
             torch.tensor(actions, dtype=torch.int64).to(device),
@@ -231,9 +253,12 @@ def train():
             advantages.clone().detach().to(device),
         )
 
-        print(
-            f"Batch {batch + 1} completed - Average Reward per Game: {np.mean(total_rewards):.2f}"
-        )
+        if total_rewards:
+            print(
+                f"Batch {batch + 1} completed - Average Reward per Game: {np.mean(total_rewards):.2f}"
+            )
+        else:
+            print(f"Batch {batch + 1} completed - No games finished.")
 
 
 if __name__ == "__main__":
