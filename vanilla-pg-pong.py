@@ -11,7 +11,9 @@ gym.register_envs(ale_py)
 
 # Set up logging
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_filename = f"training_log_{timestamp}.log"
+folder_name = f"save_{timestamp}"
+os.makedirs(folder_name, exist_ok=True)
+log_filename = os.path.join(folder_name, f"training_log_{timestamp}.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -100,8 +102,6 @@ reward_sum = 0
 episode_number = 0
 start_time = time.time()  # track total duration
 batch_start_time = time.time()  # track batch duration
-folder_name = f"save_{timestamp}"
-os.makedirs(folder_name, exist_ok=True)
 
 while True:
     if render:
@@ -182,7 +182,7 @@ while True:
         )
         start_time = time.time()
 
-        if episode_number % 100 == 0:
+        if episode_number % 500 == 0:
             pickle.dump(
                 model, open(os.path.join(folder_name, f"save_{episode_number}.p"), "wb")
             )
