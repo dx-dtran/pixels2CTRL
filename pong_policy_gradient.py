@@ -11,7 +11,7 @@ gym.register_envs(ale_py)
 
 # Set up logging
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-folder_name = f"save_{timestamp}"
+folder_name = f"save_pong_policy_gradient_{timestamp}"
 os.makedirs(folder_name, exist_ok=True)
 log_filename = os.path.join(folder_name, f"training_log_{timestamp}.log")
 logging.basicConfig(
