@@ -3,7 +3,6 @@ import pickle
 import gymnasium as gym
 import ale_py
 import os
-import time
 import cv2
 
 
@@ -29,52 +28,57 @@ def policy_forward(x, model):
     return p  # probability of taking action 2
 
 
-# Load the saved model
-model_path = "save_2025-01-04_10-47-08/save_4900.p"  # Update with your path and file
-if not os.path.exists(model_path):
-    raise FileNotFoundError(f"Model file not found at {model_path}")
+def play_and_record(env, model, video_path):
+    """Plays one episode using the given model and records it to a video."""
+    fps = 30
+    frame_size = (160, 210)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
 
-with open(model_path, "rb") as f:
-    model = pickle.load(f)
+    observation, _ = env.reset()
+    prev_x = None
+    reward_sum = 0
 
-# Create folder to save video
-video_folder = f"pong_inference_video_{int(time.time())}"
-os.makedirs(video_folder, exist_ok=True)
+    while True:  # Run until the episode finishes
+        cur_x = prepro(observation)
+        x = cur_x - prev_x if prev_x is not None else np.zeros(80 * 80)
+        prev_x = cur_x
 
-# Initialize the environment
+        aprob = policy_forward(x, model)
+        action = 2 if np.random.uniform() < aprob else 3
+
+        observation, reward, done, _, _ = env.step(action)
+        reward_sum += reward
+
+        # Write the current frame to the video
+        frame = env.render()
+        video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+        if done:
+            print(f"Episode finished. Total reward: {reward_sum}")
+            break
+
+    video_writer.release()
+
+
+# Main logic
+weights_folder = "save_2025-01-04_10-47-08"  # Update this with your folder path
+# Use the same folder as weights for saving videos
+video_output_folder = weights_folder
+
 env = gym.make("ALE/Pong-v5", render_mode="rgb_array")
 
-# Create video writer
-video_path = os.path.join(video_folder, "pong_episode.mp4")
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-fps = 30
-frame_size = (160, 210)  # Dynamically get frame size
-observation, _ = env.reset()
-video_writer = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
+for file_name in os.listdir(weights_folder):
+    if file_name.endswith(".p"):
+        model_path = os.path.join(weights_folder, file_name)
+        with open(model_path, "rb") as f:
+            model = pickle.load(f)
 
-observation, _ = env.reset()
-prev_x = None
-reward_sum = 0
+        video_path = os.path.join(
+            video_output_folder, f"{os.path.splitext(file_name)[0]}.mp4"
+        )
+        print(f"Processing {file_name}... Saving video to {video_path}")
+        play_and_record(env, model, video_path)
 
-while True:  # Run until the episode finishes
-    cur_x = prepro(observation)
-    x = cur_x - prev_x if prev_x is not None else np.zeros(80 * 80)
-    prev_x = cur_x
-
-    aprob = policy_forward(x, model)
-    action = 2 if np.random.uniform() < aprob else 3
-
-    observation, reward, done, _, _ = env.step(action)
-    reward_sum += reward
-
-    # Write the current frame to the video
-    frame = env.render()
-    video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-
-    if done:
-        print(f"Episode finished. Total reward: {reward_sum}")
-        break
-
-video_writer.release()
 env.close()
-print(f"Video saved at: {video_path}")
+print(f"All videos saved in folder: {video_output_folder}")
