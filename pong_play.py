@@ -3,7 +3,7 @@ import pickle
 import gymnasium as gym
 import ale_py
 import os
-import cv2
+import imageio
 
 
 def sigmoid(x):
@@ -28,12 +28,10 @@ def policy_forward(x, model):
     return p  # probability of taking action 2
 
 
-def play_and_record(env, model, video_path):
-    """Plays one episode using the given model and records it to a video."""
+def play_and_record(env, model, gif_path):
+    """Plays one episode using the given model and records it as a GIF."""
     fps = 30
-    frame_size = (160, 210)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_writer = cv2.VideoWriter(video_path, fourcc, fps, frame_size)
+    frames = []
 
     observation, _ = env.reset()
     prev_x = None
@@ -50,23 +48,24 @@ def play_and_record(env, model, video_path):
         observation, reward, done, _, _ = env.step(action)
         reward_sum += reward
 
-        # Write the current frame to the video
+        # Append the current frame to the frame list
         frame = env.render()
-        video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        frames.append(frame)
 
         if done:
             print(f"Episode finished. Total reward: {reward_sum}")
             break
 
-    video_writer.release()
+    # Save the frames as a GIF
+    imageio.mimsave(gif_path, frames, fps=fps)
 
 
 # Main logic
 weights_folder = (
     "save_pong_ppo_2025-01-04_22-05-16"  # Update this with your folder path
 )
-# Use the same folder as weights for saving videos
-video_output_folder = weights_folder
+# Use the same folder as weights for saving GIFs
+gif_output_folder = weights_folder
 
 env = gym.make("ALE/Pong-v5", render_mode="rgb_array")
 
@@ -77,11 +76,11 @@ for file_name in os.listdir(weights_folder):
             actor, critic = pickle.load(f)  # Unpack the tuple
             model = actor  # Use only the actor part for the existing methods
 
-        video_path = os.path.join(
-            video_output_folder, f"{os.path.splitext(file_name)[0]}.mp4"
+        gif_path = os.path.join(
+            gif_output_folder, f"{os.path.splitext(file_name)[0]}.gif"
         )
-        print(f"Processing {file_name}... Saving video to {video_path}")
-        play_and_record(env, model, video_path)
+        print(f"Processing {file_name}... Saving GIF to {gif_path}")
+        play_and_record(env, model, gif_path)
 
 env.close()
-print(f"All videos saved in folder: {video_output_folder}")
+print(f"All GIFs saved in folder: {gif_output_folder}")

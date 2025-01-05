@@ -5,3 +5,4 @@ gymnasium
 numpy
 opencv-python
 matplotlib
+imageio
