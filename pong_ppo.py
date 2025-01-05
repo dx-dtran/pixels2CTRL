@@ -25,7 +25,7 @@ logger = logging.getLogger()
 # Hyperparameters
 H = 200  # number of hidden layer neurons
 batch_size = 10  # episodes per batch
-mini_batch_size = 5  # mini-batch size for PPO updates
+mini_batch_size = 1000  # mini-batch size for PPO updates
 epochs = 4  # number of epochs per PPO update
 learning_rate = 1e-3
 gamma = 0.99  # discount factor
@@ -230,7 +230,7 @@ while True:
         )
         episode_duration = time.time() - start_time
         logger.info(
-            f"Episode {episode_number} completed. Reward total: {reward_sum}. Running mean: {running_reward:.2f}. Duration: {episode_duration:.2f} seconds"
+            f"Episode {episode_number} completed. Reward total: {reward_sum}. Running mean: {running_reward:.2f}. Num actions: {len(rewards)}. Duration: {episode_duration:.2f} seconds"
         )
 
         if episode_number % batch_size == 0:
