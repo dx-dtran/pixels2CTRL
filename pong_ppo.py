@@ -7,6 +7,10 @@ import time
 import os
 from datetime import datetime
 
+# -------------------------
+# 1) Environment & Logging
+# -------------------------
+
 # Register ALE environments
 gym.register_envs(ale_py)
 
@@ -22,7 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-# Hyperparameters
+# -------------------------
+# 2) Hyperparameters
+# -------------------------
 H = 200  # Number of hidden layer neurons
 batch_size = 10  # Episodes per batch
 mini_batch_size = 1000  # Mini-batch size for PPO updates
@@ -32,10 +38,15 @@ gamma = 0.99  # Discount factor
 lam = 0.95  # GAE lambda
 clip_epsilon = 0.2  # PPO clipping parameter
 resume = False  # Resume from previous checkpoint?
-render = False  # Render the environment?
+render = False  # Render environment?
 
-# Model initialization
-D = 80 * 80  # Input dimensionality: 80x80 grid
+# Entropy coefficient if you want to encourage exploration
+ENTROPY_COEFF = 0.01
+
+# -------------------------
+# 3) Model Initialization
+# -------------------------
+D = 80 * 80  # Input dimensionality: 80x80 grid (after preprocessing)
 if resume:
     actor, critic = pickle.load(open("save_ppo.p", "rb"))
 else:
@@ -52,7 +63,9 @@ else:
         "b2": np.zeros((1, 1)),
     }
 
-# Adam optimizer parameters for actor and critic
+# Adam optimizer parameters (actor & critic)
+beta1, beta2 = 0.9, 0.999
+epsilon = 1e-8
 adam_cache = {
     "actor": {
         "mW1": np.zeros_like(actor["W1"]),
@@ -75,31 +88,37 @@ adam_cache = {
         "vb2": np.zeros_like(critic["b2"]),
     },
 }
-beta1, beta2 = 0.9, 0.999
-epsilon = 1e-8
 
 
+# -------------------------
+# 4) Utility Functions
+# -------------------------
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 
 def prepro(I):
-    """Preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector"""
-    I = I[35:195]  # Crop
-    I = I[::2, ::2, 0]  # Downsample by factor of 2
-    I[I == 144] = 0  # Erase background (background type 1)
-    I[I == 109] = 0  # Erase background (background type 2)
-    I[I != 0] = 1  # Everything else (paddles, ball) just set to 1
+    """
+    Preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector
+    """
+    I = I[35:195]  # crop
+    I = I[::2, ::2, 0]  # downsample by factor of 2
+    I[I == 144] = 0  # erase background (background type 1)
+    I[I == 109] = 0  # erase background (background type 2)
+    I[I != 0] = 1  # everything else (paddles, ball) set to 1
     return I.astype(float).ravel()
 
 
 def discount_rewards(r):
-    """Compute discounted rewards"""
+    """
+    Compute discounted rewards for an episode
+    (Used if you are not doing full GAE, or if you want a baseline.)
+    """
     discounted_r = np.zeros_like(r)
     running_add = 0
     for t in reversed(range(r.size)):
         if r[t] != 0:
-            running_add = 0  # Reset the sum, since this was a game boundary
+            running_add = 0
         running_add = running_add * gamma + r[t]
         discounted_r[t] = running_add
     return discounted_r
@@ -108,15 +127,13 @@ def discount_rewards(r):
 def policy_forward(model, x):
     """
     Forward pass for the policy network.
-    Args:
-        model: Actor network parameters
-        x: Input features (D x N)
+    x: (D x N) input
     Returns:
-        p: Probability of taking action 2 (1 x N)
-        h: Hidden layer activations (H x N)
+      p: (1 x N) probability of action=2
+      h: (H x N) hidden layer after ReLU
     """
     z1 = np.dot(model["W1"], x) + model["b1"]  # (H x N)
-    h = np.maximum(z1, 0)  # ReLU activation
+    h = np.maximum(z1, 0)  # ReLU
     logp = np.dot(model["W2"], h) + model["b2"]  # (1 x N)
     p = sigmoid(logp)  # (1 x N)
     return p, h
@@ -125,21 +142,23 @@ def policy_forward(model, x):
 def value_forward(model, x):
     """
     Forward pass for the value network.
-    Args:
-        model: Critic network parameters
-        x: Input features (D x N)
+    x: (D x N) input
     Returns:
-        v: Value estimates (1 x N)
-        h: Hidden layer activations (H x N)
+      v: (1 x N) value predictions
+      h: (H x N) hidden layer
     """
     z1 = np.dot(model["W1"], x) + model["b1"]  # (H x N)
-    h = np.maximum(z1, 0)  # ReLU activation
+    h = np.maximum(z1, 0)  # ReLU
     v = np.dot(model["W2"], h) + model["b2"]  # (1 x N)
     return v, h
 
 
 def compute_advantages(rewards, values, gamma, lam):
-    """Compute Generalized Advantage Estimation (GAE)"""
+    """
+    Compute GAE (Generalized Advantage Estimation).
+    rewards: shape (N,)
+    values: shape (N+1,) => note last value is for the terminal state
+    """
     advantages = np.zeros_like(rewards)
     last_adv = 0
     for t in reversed(range(len(rewards))):
@@ -151,23 +170,26 @@ def compute_advantages(rewards, values, gamma, lam):
     return advantages
 
 
-def ppo_actor_grad_piecemeal(p, old_probs, advantages, actions, eps=0.2):
+# -------------------------
+# 5) PPO Actor Gradient
+# -------------------------
+def ppo_actor_grad_piecemeal(p, old_probs, advantages, actions, eps=0.2, ent_coeff=0.0):
     """
-    Compute dL/d(logit_i) for each sample i based on PPO's clipped objective.
-    Args:
-        p: shape (N,) => actor's probability of action=2
-        old_probs: shape (N,) => old pi(a_i)
-        advantages: shape (N,)
-        actions: shape (N,), 2 or 3
-        eps: clipping parameter
+    Compute dL/d(logit) for each sample i for PPO's clipped objective + optional entropy.
+    p: shape (N,) => current policy's prob of action=2
+    old_probs: shape (N,) => old pi(a_i)
+    advantages: shape (N,)
+    actions: shape (N,) in {2,3}
+    eps: clipping parameter
+    ent_coeff: how much to weight the (negative) entropy derivative
     Returns:
-        dL_dlogits: shape (N,)
+      dL_dlogits: shape (N,)
     """
     N = len(p)
 
     # 1) ratio_i
-    # define pi_new[i] = p[i] if a=2 else (1-p[i])
-    a2_mask = actions == 2  # boolean mask
+    # pi_new[i] = p[i] if a=2 else (1-p[i])
+    a2_mask = actions == 2
     pi_new = np.where(a2_mask, p, 1 - p)  # shape (N,)
     ratio = pi_new / old_probs  # shape (N,)
 
@@ -176,38 +198,47 @@ def ppo_actor_grad_piecemeal(p, old_probs, advantages, actions, eps=0.2):
     clipped_ratio = np.clip(ratio, 1.0 - eps, 1.0 + eps)
     surr2 = clipped_ratio * advantages
 
-    # 3) Determine which surrogate is active
-    use_surr1 = surr1 < surr2  # boolean mask, shape (N,)
+    # 3) pick min => piecewise derivative wrt ratio
+    use_surr1 = surr1 < surr2  # boolean mask
 
-    # Initialize dL/dr_i
+    # Initialize derivative wrt ratio
     dL_dratio = np.zeros(N, dtype=np.float32)
 
-    # Case A: surr1 < surr2 (unclipped)
+    # (A) surr1 active => derivative is -(A_i)
     dL_dratio[use_surr1] = -advantages[use_surr1]
 
-    # Case B: surr2 <= surr1 (clipped)
-    # Further split into whether ratio is within [1 - eps, 1 + eps]
+    # (B) surr2 active => derivative depends on if ratio is clipped or not
     not_use_surr1 = ~use_surr1
-    # Determine if ratio is clipped
     ratio_clipped = (ratio < (1.0 - eps)) | (ratio > (1.0 + eps))
-    # If not clipped, derivative is -A_i
-    dL_dratio[not_use_surr1 & ~ratio_clipped] = -advantages[
-        not_use_surr1 & ~ratio_clipped
-    ]
-    # If clipped, derivative is 0 (already initialized)
+    # if it's inside [1-eps, 1+eps], derivative is -(A_i)
+    inside_clip = not_use_surr1 & (~ratio_clipped)
+    dL_dratio[inside_clip] = -advantages[inside_clip]
+    # if it's outside => derivative is 0 (already is 0)
 
-    # 4) Average over N
-    dL_dratio /= N  # shape (N,)
+    # Average over batch
+    dL_dratio /= N
 
-    # 5) Chain rule: ratio = pi_new / old_prob
-    # => derivative wrt pi_new = 1 / old_prob
-    # if a=2 => pi_new = p => d pi_new/d p = +1
-    # if a=3 => pi_new = 1-p => d pi_new/d p = -1
-    dL_dpi_new = dL_dratio / old_probs  # shape (N,)
-    dL_dp = np.where(a2_mask, dL_dpi_new, -dL_dpi_new)  # shape (N,)
+    # 4) chain rule ratio => pi_new => p
+    # ratio = pi_new / old_prob
+    # => d(ratio)/d(pi_new) = 1/old_prob
+    # pi_new = p if a=2 else (1-p)
+    # => d(pi_new)/dp = +1 if a=2, else -1
+    dL_dpi_new = dL_dratio / old_probs
+    sign = np.where(a2_mask, 1.0, -1.0)
+    dL_dp = dL_dpi_new * sign
 
-    # 6) p = sigmoid(logit), => dp/d(logit) = p*(1-p)
-    dL_dlogits = dL_dp * p * (1.0 - p)  # shape (N,)
+    # 5) if we want to add an entropy term => derivative wrt p
+    #   Entropy = - [ p log p + (1-p) log(1-p) ]
+    #   so d(Entropy)/dp = - [ log p + 1 ] + [ log(1-p) + 1 ] = - log p + log(1-p)
+    # => the derivative wrt p of ( -ent_coeff * Entropy ) is:
+    #    dL_dp += -ent_coeff * d/dp(Entropy)
+    if ent_coeff > 0.0:
+        ent_grad = -(np.log(p + 1e-10) - np.log(1.0 - p + 1e-10))
+        # multiply by ent_coeff / N so it is also averaged
+        dL_dp += (ent_coeff / N) * ent_grad
+
+    # 6) p = sigmoid(logit) => dp/d(logit) = p*(1-p)
+    dL_dlogits = dL_dp * (p * (1.0 - p))
 
     return dL_dlogits
 
@@ -215,235 +246,194 @@ def ppo_actor_grad_piecemeal(p, old_probs, advantages, actions, eps=0.2):
 def update_actor(
     actor, adam_cache_actor, mb_obs, mb_actions, mb_advantages, mb_old_probs
 ):
-    """Perform manual backpropagation and update for the actor network"""
-    # Forward pass for actor
-    p, h_actor = policy_forward(actor, mb_obs)  # p: (1 x N), h_actor: (H x N)
-    p = p.squeeze()  # shape (N,)
+    """
+    Perform manual backpropagation + update for the actor network
+    using the piecewise PPO derivative + optional entropy.
+    """
+    # 1) Forward pass => (1 x N)
+    p, h_actor = policy_forward(actor, mb_obs)  # p: shape(1,N)
+    p = p.squeeze(axis=0)  # shape(N,)
+    N = mb_obs.shape[1]
 
-    # Compute gradients using piecewise logic
+    # 2) Compute piecewise gradients wrt logit
     dL_dlogits = ppo_actor_grad_piecemeal(
         p=p,
         old_probs=mb_old_probs,
         advantages=mb_advantages,
         actions=mb_actions,
         eps=clip_epsilon,
-    )  # shape (N,)
+        ent_coeff=ENTROPY_COEFF,  # if you want an entropy bonus
+    )
 
-    # Compute gradients for W2 and b2
-    # dL/dW2 = sum(dL/dlogits * h_actor) / N
-    dL_dW2_actor = np.dot(dL_dlogits, h_actor.T) / mb_obs.shape[1]  # (1 x H)
+    # 3) Backprop through W2, b2
+    # logits_i = W2 dot h_i + b2 => dlogits shape = (N,)
+    # => dL/dW2 = sum_i [ dL/dlogits_i * h_i^T ]
+    dL_dW2_actor = np.dot(dL_dlogits.reshape(1, N), h_actor.T) / N  # (1 x H)
+    dL_db2_actor = np.sum(dL_dlogits, keepdims=True).reshape(1, 1) / N  # (1 x 1)
 
-    # dL/db2 = sum(dL/dlogits) / N
-    dL_db2_actor = (
-        np.sum(dL_dlogits, axis=0, keepdims=True).T / mb_obs.shape[1]
-    )  # (1 x 1)
-
-    # Compute gradient w.r. to h_actor
+    # 4) backprop into hidden layer
     dL_dh_actor = np.dot(actor["W2"].T, dL_dlogits.reshape(1, -1))  # (H x N)
+    # ReLU
+    dL_dh_actor[h_actor <= 0] = 0
 
-    # Gradient through ReLU
-    dL_dh_actor[h_actor <= 0] = 0  # (H x N)
+    # 5) W1, b1
+    dL_dW1_actor = np.dot(dL_dh_actor, mb_obs.T) / N  # (H x D)
+    dL_db1_actor = np.sum(dL_dh_actor, axis=1, keepdims=True) / N  # (H x 1)
 
-    # Compute gradients for W1 and b1
-    # dL/dW1 = sum(dL/dh * mb_obs.T) / N
-    dL_dW1_actor = np.dot(dL_dh_actor, mb_obs.T) / mb_obs.shape[1]  # (H x D)
-
-    # dL/db1 = sum(dL/dh) / N
-    dL_db1_actor = (
-        np.sum(dL_dh_actor, axis=1, keepdims=True) / mb_obs.shape[1]
-    )  # (H x 1)
-
-    # ---------- Adam Update for Actor ----------
+    # 6) Adam updates
     for param, dparam, cache_m, cache_v in zip(
         ["W1", "b1", "W2", "b2"],
         [dL_dW1_actor, dL_db1_actor, dL_dW2_actor, dL_db2_actor],
         ["mW1", "mb1", "mW2", "mb2"],
         ["vW1", "vb1", "vW2", "vb2"],
     ):
-        # Update biased first moment estimate
         adam_cache_actor[cache_m] = (
             beta1 * adam_cache_actor[cache_m] + (1 - beta1) * dparam
         )
-        # Update biased second raw moment estimate
         adam_cache_actor[cache_v] = beta2 * adam_cache_actor[cache_v] + (1 - beta2) * (
             dparam**2
         )
-        # Compute bias-corrected first moment estimate
+
+        # NOTE: ideally use a global step t here for bias correction, not 'epochs'
         m_hat = adam_cache_actor[cache_m] / (1 - beta1**epochs)
-        # Compute bias-corrected second raw moment estimate
         v_hat = adam_cache_actor[cache_v] / (1 - beta2**epochs)
-        # Update parameters
+
         actor[param] -= learning_rate * m_hat / (np.sqrt(v_hat) + epsilon)
 
 
+# -------------------------
+# 6) Critic Grad & Update
+# -------------------------
 def compute_critic_gradients(critic, mb_obs, mb_returns):
     """
-    Compute gradients for the critic network.
-    Args:
-        critic: Critic network parameters
-        mb_obs: Mini-batch observations (D x N)
-        mb_returns: Mini-batch discounted returns (N,)
-    Returns:
-        gradients: Dictionary containing gradients for W1, b1, W2, b2
+    Compute gradients for the critic network (standard MSE).
     """
-    # Forward pass for critic
-    v, h_critic = value_forward(critic, mb_obs)  # v: (1 x N), h_critic: (H x N)
-    v = v.squeeze()  # shape (N,)
+    v, h_critic = value_forward(critic, mb_obs)  # (1 x N), (H x N)
+    v = v.squeeze(axis=0)  # shape (N,)
+    N = mb_obs.shape[1]
 
-    # Compute critic loss (Mean Squared Error)
-    error = v - mb_returns  # shape (N,)
-    critic_loss = np.mean(error**2)  # Scalar
+    # MSE loss = mean((v - R)^2)
+    error = v - mb_returns
+    dL_dv = 2 * error / N  # derivative wrt v
 
-    # Gradient of critic loss w.r. to v
-    dL_dv = (2 * error) / mb_obs.shape[1]  # shape (N,)
+    # W2, b2
+    dL_dW2 = np.dot(dL_dv.reshape(1, N), h_critic.T) / 1.0  # shape(1,H)
+    dL_dW2 /= N  # average
+    dL_db2 = np.sum(dL_dv, keepdims=True).reshape(1, 1) / N
 
-    # Compute gradients for W2 and b2
-    # dL/dW2 = sum(dL/dv * h_critic) / N
-    dL_dW2_critic = np.dot(dL_dv, h_critic.T) / mb_obs.shape[1]  # (1 x H)
+    # backprop into hidden
+    dL_dh = np.dot(critic["W2"].T, dL_dv.reshape(1, -1))  # (H x N)
+    dL_dh[h_critic <= 0] = 0
 
-    # dL/db2 = sum(dL/dv) / N
-    dL_db2_critic = np.sum(dL_dv, axis=0, keepdims=True).T / mb_obs.shape[1]  # (1 x 1)
+    dL_dW1 = np.dot(dL_dh, mb_obs.T) / N  # (H x D)
+    dL_db1 = np.sum(dL_dh, axis=1, keepdims=True) / N  # (H x 1)
 
-    # Compute gradient w.r. to h_critic
-    dL_dh_critic = np.dot(critic["W2"].T, dL_dv.reshape(1, -1))  # (H x N)
-
-    # Gradient through ReLU
-    dL_dh_critic[h_critic <= 0] = 0  # (H x N)
-
-    # Compute gradients for W1 and b1
-    # dL/dW1 = sum(dL/dh * mb_obs.T) / N
-    dL_dW1_critic = np.dot(dL_dh_critic, mb_obs.T) / mb_obs.shape[1]  # (H x D)
-
-    # dL/db1 = sum(dL/dh) / N
-    dL_db1_critic = (
-        np.sum(dL_dh_critic, axis=1, keepdims=True) / mb_obs.shape[1]
-    )  # (H x 1)
-
-    gradients = {
-        "W1": dL_dW1_critic,
-        "b1": dL_db1_critic,
-        "W2": dL_dW2_critic,
-        "b2": dL_db2_critic,
-    }
-
-    return gradients
+    return {"W1": dL_dW1, "b1": dL_db1, "W2": dL_dW2, "b2": dL_db2}
 
 
 def update_critic(critic, adam_cache_critic, mb_obs, mb_returns):
-    """Perform manual backpropagation and update for the critic network"""
-    # Compute gradients for critic
-    gradients = compute_critic_gradients(critic, mb_obs, mb_returns)
+    """
+    Perform manual backprop + update for the critic.
+    """
+    grads = compute_critic_gradients(critic, mb_obs, mb_returns)
 
-    # ---------- Adam Update for Critic ----------
     for param, dparam, cache_m, cache_v in zip(
         ["W1", "b1", "W2", "b2"],
-        [gradients["W1"], gradients["b1"], gradients["W2"], gradients["b2"]],
+        [grads["W1"], grads["b1"], grads["W2"], grads["b2"]],
         ["mW1", "mb1", "mW2", "mb2"],
         ["vW1", "vb1", "vW2", "vb2"],
     ):
-        # Update biased first moment estimate
         adam_cache_critic[cache_m] = (
             beta1 * adam_cache_critic[cache_m] + (1 - beta1) * dparam
         )
-        # Update biased second raw moment estimate
         adam_cache_critic[cache_v] = beta2 * adam_cache_critic[cache_v] + (
             1 - beta2
         ) * (dparam**2)
-        # Compute bias-corrected first moment estimate
+
         m_hat = adam_cache_critic[cache_m] / (1 - beta1**epochs)
-        # Compute bias-corrected second raw moment estimate
         v_hat = adam_cache_critic[cache_v] / (1 - beta2**epochs)
-        # Update parameters
+
         critic[param] -= learning_rate * m_hat / (np.sqrt(v_hat) + epsilon)
 
 
+# -------------------------
+# 7) PPO Update Loop
+# -------------------------
 def compute_entropy(p):
     """
-    Compute entropy of the policy.
-    Args:
-        p: shape (N,)
-    Returns:
-        entropy: scalar
+    Compute mean Bernoulli entropy of probabilities p (shape N,).
     """
     return -np.mean(p * np.log(p + 1e-10) + (1 - p) * np.log(1 - p + 1e-10))
 
 
-def ppo_update(actor, critic, observations, actions, advantages, returns, old_probs):
+def ppo_update(actor, critic, obs, actions, advantages, returns_, old_probs):
     """
-    Perform PPO update with separate backpropagation for actor and critic.
-    Args:
-        actor: Actor network parameters
-        critic: Critic network parameters
-        observations: shape (N x D)
-        actions: shape (N,)
-        advantages: shape (N,)
-        returns: shape (N,)
-        old_probs: shape (N,)
+    Perform PPO updates for a few epochs.
+    obs: shape (N,D)
+    actions: shape (N,)
+    advantages: shape (N,)
+    returns_: shape (N,)
+    old_probs: shape (N,)
     """
-    entropy_coefficient = 0.01  # Entropy regularization coefficient
-
-    for epoch in range(epochs):
-        # Shuffle the data
-        idx = np.arange(len(observations))
+    N = len(obs)
+    for ep in range(epochs):
+        idx = np.arange(N)
         np.random.shuffle(idx)
-        mb_obs = observations[idx].T  # (D x N)
+        mb_obs = obs[idx].T  # (D x N)
         mb_actions = actions[idx]  # (N,)
-        mb_advantages = advantages[idx]  # (N,)
-        mb_returns = returns[idx]  # (N,)
-        mb_old_probs = old_probs[idx]  # (N,)
+        mb_adv = advantages[idx]  # (N,)
+        mb_ret = returns_[idx]  # (N,)
+        mb_oldp = old_probs[idx]  # (N,)
 
-        # Normalize advantages
-        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
-            mb_advantages.std() + 1e-8
-        )
+        # normalize advantages
+        mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
-        # Update actor
-        update_actor(
-            actor, adam_cache["actor"], mb_obs, mb_actions, mb_advantages, mb_old_probs
-        )
-
-        # Update critic
-        update_critic(critic, adam_cache["critic"], mb_obs, mb_returns)
+        # Actor
+        update_actor(actor, adam_cache["actor"], mb_obs, mb_actions, mb_adv, mb_oldp)
+        # Critic
+        update_critic(critic, adam_cache["critic"], mb_obs, mb_ret)
 
 
+# -------------------------
+# 8) Main Training Loop
+# -------------------------
 def main():
-    # Initialize environment
     env = gym.make("ALE/Pong-v5", render_mode="rgb_array")
     observation, _ = env.reset()
     prev_x = None
 
-    # Initialize storage
+    # Storage
     observations, actions, rewards, values, old_probs = [], [], [], [], []
     episode_number = 0
     reward_sum = 0
     running_reward = None
-    start_time = time.time()  # Track total duration
-    batch_start_time = time.time()  # Track batch duration
+    start_time = time.time()
+    batch_start_time = time.time()
 
     while True:
         if render:
             env.render()
 
-        # Preprocess observation
+        # Preprocess
         cur_x = prepro(observation)
         x = cur_x - prev_x if prev_x is not None else np.zeros(D)
-        x = x.reshape(-1, 1)  # (D x 1)
+        x = x.reshape(-1, 1)  # (D,1)
         prev_x = cur_x
 
-        # Forward pass through policy and value networks
-        aprob, _ = policy_forward(actor, x)  # aprob: (1 x 1)
-        v, _ = value_forward(critic, x)  # v: (1 x 1)
+        # Forward pass => actor & critic
+        aprob, _ = policy_forward(actor, x)  # (1 x 1)
         p = aprob.squeeze()  # scalar
+        v, _ = value_forward(critic, x)
         action = 2 if np.random.uniform() < p else 3
 
-        # Record data
+        # Record
         observations.append(x.flatten())
         actions.append(action)
-        old_prob = p if action == 2 else 1 - p
+        old_prob = p if action == 2 else (1 - p)
         old_probs.append(old_prob)
         values.append(v.squeeze())
 
-        # Step environment
+        # Step env
         observation, reward, done, truncated, info = env.step(action)
         rewards.append(reward)
         reward_sum += reward
@@ -451,52 +441,49 @@ def main():
         if done or truncated:
             episode_number += 1
 
-            # Convert lists to arrays
+            # Convert to np arrays
             observations_np = np.array(observations)  # (N x D)
-            actions_np = np.array(actions)  # (N,)
-            rewards_np = np.array(rewards)  # (N,)
-            values_np = np.array(values + [0])  # (N+1,)
-            old_probs_np = np.array(old_probs)  # (N,)
+            actions_np = np.array(actions)
+            rewards_np = np.array(rewards)
+            values_np = np.array(values + [0])  # (N+1,) => last=0 for terminal
+            old_probs_np = np.array(old_probs)
 
-            # Compute discounted returns and advantages
+            # Compute returns & advantages
             returns_np = discount_rewards(rewards_np)
-            advantages_np = compute_advantages(rewards_np, values_np, gamma, lam)
+            adv_np = compute_advantages(rewards_np, values_np, gamma, lam)
 
-            # Update policy and value networks
+            # PPO update
             ppo_update(
                 actor,
                 critic,
                 observations_np,
                 actions_np,
-                advantages_np,
+                adv_np,
                 returns_np,
                 old_probs_np,
             )
 
-            # Compute entropy for logging
-            p_new, _ = policy_forward(actor, observations_np.T)
-            entropy = compute_entropy(p_new.squeeze())
+            # Logging
+            p_new, _ = policy_forward(actor, observations_np.T)  # shape(1,N)
+            entropy_val = compute_entropy(p_new.squeeze())
 
-            # Log progress
             running_reward = (
                 reward_sum
                 if running_reward is None
-                else running_reward * 0.99 + reward_sum * 0.01
+                else 0.99 * running_reward + 0.01 * reward_sum
             )
-            episode_duration = time.time() - start_time
+            ep_dur = time.time() - start_time
             logger.info(
-                f"Episode {episode_number} completed. Reward total: {reward_sum}. Running mean: {running_reward:.2f}. Num actions: {len(rewards)}. Duration: {episode_duration:.2f} seconds. Entropy: {entropy:.4f}"
+                f"Episode {episode_number} done. Reward: {reward_sum}. "
+                f"Running mean: {running_reward:.2f}. Steps: {len(rewards)}. "
+                f"Duration: {ep_dur:.2f}s. Entropy: {entropy_val:.4f}"
             )
 
-            # Batch update logging
             if episode_number % batch_size == 0:
-                batch_duration = time.time() - batch_start_time
-                logger.info(
-                    f"Batch update completed. Duration: {batch_duration:.2f} seconds"
-                )
-                batch_start_time = time.time()  # Reset batch start time
+                batch_dur = time.time() - batch_start_time
+                logger.info(f"Batch update done in {batch_dur:.2f}s.")
+                batch_start_time = time.time()
 
-            # Checkpointing
             if episode_number % 500 == 0 or episode_number == 1:
                 pickle.dump(
                     (actor, critic),
@@ -505,7 +492,7 @@ def main():
                     ),
                 )
 
-            # Reset episode data
+            # Reset
             observations, actions, rewards, values, old_probs = [], [], [], [], []
             reward_sum = 0
             observation, _ = env.reset()
