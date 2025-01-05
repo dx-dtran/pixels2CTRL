@@ -62,7 +62,9 @@ def play_and_record(env, model, video_path):
 
 
 # Main logic
-weights_folder = "save_pong_ppo_2025-01-04_16-22-20"  # Update this with your folder path
+weights_folder = (
+    "save_pong_ppo_2025-01-04_22-05-16"  # Update this with your folder path
+)
 # Use the same folder as weights for saving videos
 video_output_folder = weights_folder
 

@@ -30,7 +30,6 @@ logger = logging.getLogger()
 # 2) Hyperparameters
 # -------------------------
 H = 200  # Number of hidden layer neurons
-batch_size = 10  # Episodes per batch
 mini_batch_size = 1000  # Mini-batch size for PPO updates
 epochs = 4  # Number of epochs per PPO update
 learning_rate = 1e-3
@@ -408,7 +407,6 @@ def main():
     reward_sum = 0
     running_reward = None
     start_time = time.time()
-    batch_start_time = time.time()
 
     while True:
         if render:
@@ -479,12 +477,7 @@ def main():
                 f"Duration: {ep_dur:.2f}s. Entropy: {entropy_val:.4f}"
             )
 
-            if episode_number % batch_size == 0:
-                batch_dur = time.time() - batch_start_time
-                logger.info(f"Batch update done in {batch_dur:.2f}s.")
-                batch_start_time = time.time()
-
-            if episode_number % 500 == 0 or episode_number == 1:
+            if episode_number % 100 == 0 or episode_number == 1:
                 pickle.dump(
                     (actor, critic),
                     open(

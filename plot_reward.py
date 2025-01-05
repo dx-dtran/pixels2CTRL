@@ -44,7 +44,7 @@ plt.figure(figsize=(12, 10))
 
 # Subplot 1: Reward Running Mean Over Time
 plt.subplot(2, 1, 1)
-plt.plot(episodes, running_means, linestyle="-", linewidth=0.8)
+plt.plot(episodes, running_means, linestyle="-", linewidth=2, color="blue")
 plt.title("Reward Running Mean Over Time")
 plt.xlabel("Episode Number")
 plt.ylabel("Reward Running Mean")
@@ -52,13 +52,7 @@ plt.grid(True)
 
 # Subplot 2: Episode Duration Over Time
 plt.subplot(2, 1, 2)
-plt.plot(
-    episodes,
-    durations,
-    linestyle="-",
-    linewidth=0.8,
-    color="orange",
-)
+plt.plot(episodes, durations, linestyle="-", linewidth=2, color="orange")
 plt.title("Episode Duration Over Time")
 plt.xlabel("Episode Number")
 plt.ylabel("Duration (s)")
