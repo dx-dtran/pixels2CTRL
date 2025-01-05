@@ -125,6 +125,8 @@ def compute_gradients(loss, model):
 
 def ppo_update(actor, critic, observations, actions, advantages, returns, old_probs):
     """Perform PPO update"""
+    entropy_coefficient = 0.01  # You can adjust this coefficient as needed
+
     for _ in range(epochs):
         for start in range(0, len(observations), mini_batch_size):
             end = start + mini_batch_size
@@ -141,25 +143,30 @@ def ppo_update(actor, critic, observations, actions, advantages, returns, old_pr
             # Compute PPO loss
             ratios = probs / mb_old_probs
             clipped_ratios = np.clip(ratios, 1 - clip_epsilon, 1 + clip_epsilon)
-            actor_loss = -np.mean(
-                np.minimum(ratios * mb_advantages, clipped_ratios * mb_advantages)
+            ppo_loss = np.minimum(
+                ratios * mb_advantages, clipped_ratios * mb_advantages
             )
 
-            critic_loss = np.mean((values - mb_returns) ** 2)
+            # Compute entropy
+            entropy = -probs * np.log(probs + 1e-10)  # Add small value to avoid log(0)
 
-            total_loss = actor_loss + 0.5 * critic_loss
+            # Combine PPO loss and entropy into a single actor loss formula
+            actor_loss = -np.mean(ppo_loss + entropy_coefficient * entropy)
+
+            critic_loss = np.mean((values - mb_returns) ** 2)
 
             # Compute gradients
             d_actor = compute_gradients(actor_loss, actor)
             d_critic = compute_gradients(critic_loss, critic)
 
-            # Update parameters using Adam
+            # Update actor parameters using Adam
             for k in actor:
                 m, v = adam_cache["actor"]["m"][k], adam_cache["actor"]["v"][k]
                 m = beta1 * m + (1 - beta1) * d_actor[k]
                 v = beta2 * v + (1 - beta2) * (d_actor[k] ** 2)
                 actor[k] += learning_rate * m / (np.sqrt(v) + epsilon)
 
+            # Update critic parameters using Adam
             for k in critic:
                 m, v = adam_cache["critic"]["m"][k], adam_cache["critic"]["v"][k]
                 m = beta1 * m + (1 - beta1) * d_critic[k]
@@ -240,7 +247,7 @@ while True:
             )
             batch_start_time = time.time()  # reset batch start time
 
-        if episode_number % 500 == 0:
+        if episode_number % 500 == 0 or episode_number == 1:
             pickle.dump(
                 (actor, critic),
                 open(os.path.join(folder_name, f"save_ppo_{episode_number}.p"), "wb"),

@@ -62,7 +62,7 @@ def play_and_record(env, model, video_path):
 
 
 # Main logic
-weights_folder = "save_2025-01-04_10-47-08"  # Update this with your folder path
+weights_folder = "save_pong_ppo_2025-01-04_16-22-20"  # Update this with your folder path
 # Use the same folder as weights for saving videos
 video_output_folder = weights_folder
 
@@ -72,7 +72,8 @@ for file_name in os.listdir(weights_folder):
     if file_name.endswith(".p"):
         model_path = os.path.join(weights_folder, file_name)
         with open(model_path, "rb") as f:
-            model = pickle.load(f)
+            actor, critic = pickle.load(f)  # Unpack the tuple
+            model = actor  # Use only the actor part for the existing methods
 
         video_path = os.path.join(
             video_output_folder, f"{os.path.splitext(file_name)[0]}.mp4"
