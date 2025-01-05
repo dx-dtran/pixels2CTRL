@@ -4,3 +4,4 @@ ale-py
 gymnasium
 numpy
 opencv-python
+matplotlib
