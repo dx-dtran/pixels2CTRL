@@ -316,16 +316,15 @@ def compute_critic_gradients(critic, mb_obs, mb_returns):
     dL_dv = 2 * error / N  # derivative wrt v
 
     # W2, b2
-    dL_dW2 = np.dot(dL_dv.reshape(1, N), h_critic.T) / 1.0  # shape(1,H)
-    dL_dW2 /= N  # average
-    dL_db2 = np.sum(dL_dv, keepdims=True).reshape(1, 1) / N
+    dL_dW2 = np.dot(dL_dv.reshape(1, N), h_critic.T)  # shape(1,H)
+    dL_db2 = np.sum(dL_dv, keepdims=True).reshape(1, 1)
 
     # backprop into hidden
     dL_dh = np.dot(critic["W2"].T, dL_dv.reshape(1, -1))  # (H x N)
     dL_dh[h_critic <= 0] = 0
 
-    dL_dW1 = np.dot(dL_dh, mb_obs.T) / N  # (H x D)
-    dL_db1 = np.sum(dL_dh, axis=1, keepdims=True) / N  # (H x 1)
+    dL_dW1 = np.dot(dL_dh, mb_obs.T)  # (H x D)
+    dL_db1 = np.sum(dL_dh, axis=1, keepdims=True)  # (H x 1)
 
     return {"W1": dL_dW1, "b1": dL_db1, "W2": dL_dW2, "b2": dL_db2}
 
